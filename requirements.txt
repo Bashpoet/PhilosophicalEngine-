@@ -1,2 +1,7 @@
-requirements.txt  
+```text
+# requirements.txt
+
 anthropic>=0.3.0
+scikit-learn
+networkx
+```
