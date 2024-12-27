@@ -1,0 +1,572 @@
+#!/usr/bin/env python3
+"""
+philo_symphony.py
+
+A comprehensive script that demonstrates:
+1. Multi-turn philosophical dialogues with structured XML output and validation.
+2. "Symphony of Synthesis": orchestrating multiple domains or experts in parallel
+   and detecting resonances among them.
+3. Temporal weighting of concepts, metaphorical mapping, and emergent pattern detection.
+4. Dialectical evolution across multiple rounds (thesis, antithesis, synthesis cycles).
+
+Requires:
+    pip install anthropic
+"""
+
+import os
+import re
+import xml.etree.ElementTree as ET
+from typing import List, Dict, Any
+
+try:
+    from anthropic import Anthropic
+except ImportError:
+    raise ImportError("Please install anthropic with: pip install anthropic")
+
+###############################################################################
+# ANTHROPIC CLIENT SETUP
+###############################################################################
+
+# Make sure your ANTHROPIC_API_KEY is set in the environment
+client = Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", "FAKE_KEY_FOR_DEMO"))
+
+
+###############################################################################
+# CORE LLM CALL AND XML UTILITIES
+###############################################################################
+
+def llm_call(
+    prompt: str,
+    system_prompt: str = "",
+    model: str = "claude-3-5-sonnet-20241022",
+    temperature: float = 0.4,
+    messages: List[Dict[str, str]] = None
+) -> str:
+    """
+    Calls the Anthropic model with the given prompt (and optional system_prompt)
+    to get a response. Optionally appends the prompt to an existing conversation
+    (messages), allowing for multi-turn continuity.
+    """
+    if messages is None:
+        messages = []
+
+    # The user's prompt is appended as the last message in the conversation
+    messages.append({"role": "user", "content": prompt})
+
+    try:
+        response = client.messages.create(
+            model=model,
+            max_tokens=4096,
+            system=system_prompt,
+            messages=messages,
+            temperature=temperature,
+        )
+        return response.content[0].text
+    except Exception as e:
+        print(f"Error during llm_call: {e}")
+        return ""
+
+def is_valid_xml(content: str) -> bool:
+    """
+    Tries to parse the given content as XML. Returns True if valid, False otherwise.
+    """
+    try:
+        ET.fromstring(content)
+        return True
+    except ET.ParseError:
+        return False
+
+def extract_xml(content: str, tag: str) -> str:
+    """
+    Extracts the content of the specified XML tag from the given text.
+    Returns an empty string if the tag is not found.
+    Uses a simple pattern-based approach (Regex).
+    """
+    # For example, if tag is "Resonance type='cross_domain'",
+    # we escape single quotes in the pattern if needed or just match verbatim:
+    pattern = f"<{tag}>(.*?)</{tag}>"
+    match = re.search(pattern, content, re.DOTALL)
+    return match.group(1).strip() if match else ""
+
+def extract_xml_tag(content: str, tag: str) -> str:
+    """
+    Similar to extract_xml, but you can call whichever function naming you prefer.
+    Provided for convenience. Returns first match only.
+    """
+    return extract_xml(content, tag)
+
+def extract_nested_tags(text: str, outer_tag: str, inner_tag: str) -> List[str]:
+    """
+    Returns a list of all <inner_tag>...</inner_tag> found within the <outer_tag>...</outer_tag> block.
+    """
+    outer_content = extract_xml(text, outer_tag)
+    if not outer_content:
+        return []
+    pattern = f"<{inner_tag}>(.*?)</{inner_tag}>"
+    return re.findall(pattern, outer_content, re.DOTALL)
+
+
+###############################################################################
+# BASIC "PHILOSOPHER'S STONE" & "SYMPHONY OF SYNTHESIS" DEMOS
+###############################################################################
+
+def generate_philosophers_dialogue(philosopher1: str, philosopher2: str, topic: str) -> None:
+    """
+    Implements a single-shot 'Philosopher's Stone' scenario:
+    a dialogue between philosopher1 and philosopher2 about the given topic, 
+    with each philosopher's statement wrapped in XML tags for easy parsing.
+    """
+    system_prompt = (
+        f"You are the moderator of a conversation between {philosopher1} and {philosopher2}. "
+        f"Each speaks in their own style, referencing their distinct philosophies or ideas. "
+        "Format the final answer using the following tags exactly:\n"
+        f"<{philosopher1.lower()}> ... </{philosopher1.lower()}>\n"
+        f"<{philosopher2.lower()}> ... </{philosopher2.lower()}>\n"
+        "Do not provide any content outside these two tags."
+    )
+    user_prompt = (
+        f"The conversation topic is: {topic}. Engage in a robust exchange of ideas, each philosopher responding in turn."
+    )
+    raw_output = llm_call(user_prompt, system_prompt=system_prompt, temperature=0.5)
+
+    # Attempt minimal validation, and if invalid, ask to regenerate once
+    if not is_valid_xml(raw_output):
+        regen_prompt = (
+            "Your previous response was not valid XML or did not match the structure. "
+            "Please regenerate with the exact tag structure requested."
+        )
+        raw_output = llm_call(regen_prompt, system_prompt=system_prompt, temperature=0.5)
+
+    # Extract each philosopher's speech
+    philosopher1_text = extract_xml_tag(raw_output, philosopher1.lower())
+    philosopher2_text = extract_xml_tag(raw_output, philosopher2.lower())
+
+    print(f"=== Dialogue on {topic} ===\n")
+    print(f"{philosopher1.upper()}:\n{philosopher1_text}\n")
+    print(f"{philosopher2.upper()}:\n{philosopher2_text}\n")
+
+def symphony_of_synthesis(fields: List[str], topic: str) -> None:
+    """
+    Implements the 'Symphony of Synthesis' by asking multiple domain experts
+    to discuss how their domains intersect around a given topic, each labeled with XML.
+    """
+    domain_tags = []
+    for field in fields:
+        safe_field = field.lower().replace(" ", "_")
+        domain_tags.append(f"<expert domain='{safe_field}'> ... </expert>")
+
+    system_prompt = (
+        "You are orchestrating a roundtable among diverse domain experts. "
+        "They must respond in distinct voices, focusing on potential overlaps and synergies. "
+        "Format your final answer using the following tags exactly, and do not provide text outside them:\n\n"
+        + "\n".join(domain_tags)
+        + "\n"
+    )
+    user_prompt = f"Each expert should explore how {topic} relates to their domain, then highlight surprising connections."
+
+    raw_output = llm_call(user_prompt, system_prompt=system_prompt, temperature=0.6)
+
+    # Attempt minimal validation
+    if not is_valid_xml(raw_output):
+        regen_prompt = (
+            "Your previous response was not valid XML or did not match the structure. "
+            "Regenerate using the exact tag structure requested."
+        )
+        raw_output = llm_call(regen_prompt, system_prompt=system_prompt, temperature=0.6)
+
+    print(f"=== SYMPHONY OF SYNTHESIS ON: {topic} ===\n")
+    for field in fields:
+        safe_field = field.lower().replace(" ", "_")
+        content = extract_xml_tag(raw_output, f"expert domain='{safe_field}'")
+        print(f"--- Insights from {field} ---\n{content}\n")
+
+
+###############################################################################
+# MULTI-TURN DIALOGUE & DIALECTICAL PHASES
+###############################################################################
+
+def multi_turn_philosophers(philosopher1: str, philosopher2: str, topic: str, rounds: int = 3):
+    """
+    Demonstrates a multi-turn dialogue between two philosophers about a specified topic.
+    Each round is an iterative call. We try to ensure well-formed XML each time.
+    We'll store the conversation so far in 'conversation' to preserve context.
+    """
+    system_prompt = f"""You are orchestrating a multi-round debate between {philosopher1} and {philosopher2} on the topic "{topic}".
+The format of each round must be:
+<round>
+  <{philosopher1.lower()}>
+    Their statement goes here
+  </{philosopher1.lower()}>
+  <{philosopher2.lower()}>
+    Their statement goes here
+  </{philosopher2.lower()}>
+</round>
+Do not include anything outside these XML tags. Make sure it's valid XML. 
+Keep the style distinct for each philosopher."""
+
+    conversation = [
+        {"role": "system", "content": system_prompt}
+    ]
+
+    for current_round in range(1, rounds + 1):
+        user_prompt = (
+            f"This is round {current_round}. Each philosopher should respond in turn, "
+            "building on what was said previously. "
+            f"The topic is still: {topic}."
+        )
+        raw_output = llm_call(
+            prompt=user_prompt,
+            system_prompt=system_prompt,
+            messages=conversation,
+            temperature=0.7
+        )
+
+        # Validate
+        if not is_valid_xml(raw_output):
+            regen_prompt = (
+                "Your previous response was not valid XML or incorrect. "
+                f"Please regenerate with the exact tag structure: "
+                f"<round><{philosopher1.lower()}>...</{philosopher1.lower()}><{philosopher2.lower()}>...</{philosopher2.lower()}></round>."
+            )
+            raw_output = llm_call(
+                prompt=regen_prompt,
+                system_prompt=system_prompt,
+                messages=conversation,
+                temperature=0.7
+            )
+
+        conversation.append({"role": "assistant", "content": raw_output})
+        print(f"\n===== ROUND {current_round} =====\n")
+        print(raw_output)
+
+    return conversation
+
+
+###############################################################################
+# TEMPORAL WEIGHTING SYSTEM (FOR CONCEPTS ACROSS ROUNDS)
+###############################################################################
+
+def track_concepts(
+    round_text: str, 
+    concept_weights: Dict[str, float], 
+    round_num: int, 
+    decay: float = 0.95
+) -> None:
+    """
+    Identifies naive key concepts in the round_text, updating concept_weights with 
+    incremental weights and applying a decay factor to older concepts.
+    """
+    # Decay older concepts
+    for concept in concept_weights:
+        concept_weights[concept] *= decay
+    
+    # Example approach: naive keywords
+    possible_concepts = ["Allegory of the Cave", "Forms", "Recursion", "Emergent Complexity", "Mycelium"]
+    
+    for c in possible_concepts:
+        if c.lower() in round_text.lower():
+            if c not in concept_weights:
+                concept_weights[c] = 1.0
+            else:
+                concept_weights[c] += 0.5  # increment weight
+
+def run_temporal_dialogue(participants: List[str], topic: str, rounds: int = 3):
+    """
+    Illustrates a multi-round conversation among participants, 
+    tracking concept weights over time.
+    """
+    concept_weights = {}
+    full_dialogue = []
+
+    # For simplicity, we'll just do naive placeholders for the conversation text
+    for i in range(rounds):
+        round_output = f"Round {i+1} discussion about {topic} referencing possible concepts. (Placeholder text)"
+
+        # Track the concepts
+        track_concepts(round_output, concept_weights, i)
+
+        full_dialogue.append(round_output)
+
+    # Print out final concept weights
+    sorted_concepts = sorted(concept_weights.items(), key=lambda x: x[1], reverse=True)
+    print("\n=== Temporal Concept Weights ===")
+    for concept, weight in sorted_concepts:
+        print(f"{concept}: {weight:.2f}")
+
+    return full_dialogue, concept_weights
+
+
+###############################################################################
+# METAPHORICAL MAPPING (FINDING ANALOGIES)
+###############################################################################
+
+def metaphorical_mapping(domain_structures: Dict[str, List[str]]) -> List[str]:
+    """
+    Given a dict of {domain_name: [key structures]}, produce naive cross-domain analogies.
+    """
+    metaphors = []
+    domains = list(domain_structures.keys())
+
+    for i in range(len(domains)):
+        for j in range(i+1, len(domains)):
+            d1, d2 = domains[i], domains[j]
+            for structure1 in domain_structures[d1]:
+                for structure2 in domain_structures[d2]:
+                    # If they share a certain conceptual pattern
+                    if "network" in structure1.lower() and "network" in structure2.lower():
+                        # Create a simple metaphor
+                        metaphor = (
+                            f"In {d1}, '{structure1}' parallels {d2}'s '{structure2}', "
+                            "suggesting a shared principle of connectivity."
+                        )
+                        metaphors.append(metaphor)
+    return metaphors
+
+
+###############################################################################
+# DETECTING EMERGENT PATTERNS
+###############################################################################
+
+def detect_emergent_patterns(
+    conversation_history: List[str],
+    domain_baselines: Dict[str, set]
+) -> List[str]:
+    """
+    Checks conversation_history for signals that combine domain concepts in a new synergy. 
+    Stub function for demonstration only.
+    """
+    emergent_concepts = []
+
+    # In real usage, parse each chunk. This is just illustrative pseudo-logic.
+    for round_text in conversation_history:
+        # Imagine we detect references bridging two separate domain sets
+        # E.g., if round_text references "fugue" (music) and "microservices" (software)
+        pass
+
+    return emergent_concepts
+
+
+###############################################################################
+# CROSS-DOMAIN RESONANCES & ENHANCED DETECTION
+###############################################################################
+
+def cross_domain_resonances(domains: List[str], topic: str) -> None:
+    """
+    Simple version that requests a multi-domain exploration with a <Resonance type='cross_domain'> block.
+    """
+    system_instructions = []
+    for d in domains:
+        d_safe = d.replace(" ", "_")
+        system_instructions.append(f"<Domain name='{d_safe}'> ... </Domain>")
+
+    system_instructions.append(
+        "<Resonance type='cross_domain'>\n"
+        "    <Pattern>...</Pattern>\n"
+        "    <Applications>...</Applications>\n"
+        "</Resonance>"
+    )
+
+    system_prompt = (
+        "You are orchestrating a multi-domain exploration. The domains are:\n"
+        + ", ".join(domains)
+        + f". The topic is: {topic}\n"
+        "Format your final answer with these exact tags, no content outside them:\n\n"
+        + "\n".join(system_instructions)
+    )
+    user_prompt = (
+        "Focus on how each domain views the topic, then converge on one or more cross-domain resonances."
+    )
+
+    raw_output = llm_call(prompt=user_prompt, system_prompt=system_prompt, temperature=0.6)
+    print(f"=== CROSS-DOMAIN RESONANCES on {topic.upper()} ===\n")
+
+    for d in domains:
+        d_tag = f"Domain name='{d.replace(' ', '_')}'"
+        domain_text = extract_xml(raw_output, d_tag)
+        print(f"--- {d} ---\n{domain_text.strip()}\n")
+
+    resonance_content = extract_xml(raw_output, "Resonance type='cross_domain'")
+    if resonance_content:
+        pattern = extract_xml(resonance_content, "Pattern")
+        apps = extract_xml(resonance_content, "Applications")
+        print("=== CROSS-DOMAIN RESONANCE ===")
+        print(f"Pattern:\n{pattern.strip()}\n")
+        print(f"Applications:\n{apps.strip()}\n")
+    else:
+        print("No cross-domain resonance found. Possibly needs another nudge!")
+
+def enhance_resonance_detection(raw_output: str, domains: List[str]) -> dict:
+    """
+    A more sophisticated resonance detector that identifies multiple layers
+    of cross-domain harmony, e.g. 'Resonance domains="domain1,domain2"' 
+    or <Resonance type='emergent'>.
+    """
+    resonances = {
+        'primary': extract_xml(raw_output, "Resonance type='cross_domain'"),
+        'patterns': [],
+        'applications': [],
+        'emergent': []
+    }
+
+    # First-order resonances for pairs of domains
+    for i, domain1 in enumerate(domains):
+        for domain2 in domains[i+1:]:
+            pattern = f"Resonance domains='{domain1},{domain2}'"
+            connection = extract_xml(raw_output, pattern)
+            if connection:
+                resonances['patterns'].append({
+                    'domains': [domain1, domain2],
+                    'insight': connection
+                })
+
+    # Look for emergent patterns
+    emergent_pattern = extract_xml(raw_output, "Resonance type='emergent'")
+    if emergent_pattern:
+        resonances['emergent'].append(emergent_pattern)
+
+    return resonances
+
+
+###############################################################################
+# DIALECTICAL EVOLUTION (THESIS, ANTITHESIS, SYNTHESIS)
+###############################################################################
+
+def craft_dialectical_prompt(participants: List[str], round_num: int, history: List[str]) -> str:
+    """
+    Constructs a prompt that instructs each participant to produce 
+    <DialoguePhase type='thesis'>, <DialoguePhase type='antithesis'>, 
+    and <DialoguePhase type='synthesis'> blocks, referencing prior history.
+    """
+    # A simple stub. You can expand with more context or retrieved info from history.
+    p_tags = []
+    for p in participants:
+        safe_name = p.replace(" ", "_")
+        p_tags.append(
+f"""<Participant name='{safe_name}'>
+    <DialoguePhase type='thesis'>...</DialoguePhase>
+    <DialoguePhase type='antithesis'>...</DialoguePhase>
+    <DialoguePhase type='synthesis'>...</DialoguePhase>
+</Participant>""")
+
+    prompt = (
+        f"You are orchestrating round {round_num + 1} of a dialectical debate among: " 
+        + ", ".join(participants)
+        + ". Use the following structure for each participant:\n\n"
+        + "\n".join(p_tags)
+        + "\n\nPrevious discussion:\n"
+        + "\n".join(history)
+        + "\nDo not include text outside these tags."
+    )
+    return prompt
+
+def parse_philosophical_round(response: str, participants: List[str]) -> Dict[str, Dict[str, str]]:
+    """
+    Parses out each participant's thesis, antithesis, and synthesis from the response.
+    Returns a dictionary: { participant_name: {"thesis": "...", "antithesis": "...", "synthesis": "..."} }
+    """
+    round_insights = {}
+    for p in participants:
+        p_tag = f"Participant name='{p.replace(' ', '_')}'"
+        p_content = extract_xml(response, p_tag)
+        if not p_content:
+            continue
+
+        # For each phase
+        thesis = extract_xml(p_content, "DialoguePhase type='thesis'")
+        antithesis = extract_xml(p_content, "DialoguePhase type='antithesis'")
+        synthesis = extract_xml(p_content, "DialoguePhase type='synthesis'")
+
+        round_insights[p] = {
+            "thesis": thesis,
+            "antithesis": antithesis,
+            "synthesis": synthesis
+        }
+    return round_insights
+
+def identify_emergent_patterns(current_round: Dict[str, Dict[str, str]], previous_rounds: List[Dict[str, Dict[str, str]]]) -> List[str]:
+    """
+    A stub that tries to see if new topics or ideas emerged in the current_round 
+    that weren't present in previous_rounds. Real logic would do more sophisticated text analysis.
+    """
+    # For now, just returns an empty list.
+    return []
+
+def dialectical_evolution(
+    participants: List[str],
+    topic: str,
+    rounds: int = 3,
+    temperature: float = 0.7
+) -> Dict[str, Any]:
+    """
+    A sophisticated multi-round philosophical dialogue 
+    that tracks the evolution of ideas through thesis, antithesis, and synthesis cycles.
+    """
+    dialogue_history = []
+    insights = {
+        'rounds': [],
+        'emergent_themes': [],
+        'conceptual_bridges': []
+    }
+
+    for round_num in range(rounds):
+        system_prompt = craft_dialectical_prompt(participants, round_num, dialogue_history)
+
+        # Summarize history so the model sees it as context
+        user_prompt = (
+            f"Round {round_num + 1} on '{topic}'. "
+            "Each participant should offer thesis, antithesis, and synthesis, referencing prior statements."
+        )
+        response = llm_call(
+            prompt=user_prompt,
+            system_prompt=system_prompt,
+            temperature=temperature
+        )
+
+        # If invalid XML, attempt one regeneration
+        if not is_valid_xml(response):
+            regen_prompt = (
+                "Your previous response was invalid or didn't match the required XML. "
+                "Please regenerate with the correct structure (Participant / DialoguePhase)."
+            )
+            response = llm_call(
+                prompt=regen_prompt,
+                system_prompt=system_prompt,
+                temperature=temperature
+            )
+
+        round_insights = parse_philosophical_round(response, participants)
+        insights['rounds'].append(round_insights)
+
+        if round_num > 0:
+            # Check for emergent themes relative to prior rounds
+            themes = identify_emergent_patterns(current_round=round_insights, previous_rounds=insights['rounds'][:-1])
+            insights['emergent_themes'].extend(themes)
+
+        dialogue_history.append(response)
+
+    return insights
+
+
+###############################################################################
+# MAIN DEMO (if you run this file directly)
+###############################################################################
+
+if __name__ == "__main__":
+    print("=== SINGLE-SHOT PHILOSOPHERS DEMO ===")
+    generate_philosophers_dialogue("Plato", "Douglas_Hofstadter", "the nature of consciousness")
+
+    print("\n=== SYMPHONY OF SYNTHESIS DEMO ===")
+    symphony_of_synthesis(["Baroque Music", "Software Architecture", "Mycology"], "emergent complexity")
+
+    print("\n=== MULTI-TURN PHILOSOPHERS DEMO ===")
+    multi_turn_philosophers("Plato", "Nietzsche", "the will to truth", rounds=2)
+
+    print("\n=== TEMPORAL DIALOGUE DEMO (STUB) ===")
+    run_temporal_dialogue(["Philosopher A", "Philosopher B"], "reality", rounds=3)
+
+    print("\n=== CROSS-DOMAIN RESONANCES DEMO ===")
+    cross_domain_resonances(["Quantum Physics", "Jazz Improvisation"], "creative problem solving")
+
+    print("\n=== DIALECTICAL EVOLUTION DEMO (THESIS-ANTITHESIS-SYNTHESIS) ===")
+    results = dialectical_evolution(["Wittgenstein", "Chomsky"], "language games", rounds=2, temperature=0.7)
+    print("Final Dialectical Evolution Results:", results)
