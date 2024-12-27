@@ -1,50 +1,84 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 philo_symphony_extended.py
 
-A comprehensive script that demonstrates:
-1. Multi-turn philosophical dialogues with structured XML output and validation.
-2. Interdisciplinary discussions ("Symphony of Synthesis").
-3. Advanced concept tracking using TF-IDF.
-4. Emergent pattern detection using a naive graph-based approach.
-5. Multiple dialectical structures (Hegelian, Socratic).
+A comprehensive script for orchestrating multi-round philosophical dialogues,
+interdisciplinary discussions, and emergent pattern detection. It leverages
+the Anthropic language model API to generate structured XML responses,
+and includes:
+    - Single-shot dialogues ("Philosopher's Stone")
+    - Multi-turn dialogues
+    - Advanced concept tracking via TF-IDF
+    - Emergent pattern detection using a concept graph
+    - Multiple dialectical frameworks: Hegelian (thesis/antithesis/synthesis) & Socratic
+    - Configurable logging and system prompts
+    - Demonstration of how to incorporate or mock user inputs, environment variables,
+      or domain-specific knowledge
 
-Dependencies:
-    pip install anthropic
-    pip install scikit-learn
-    pip install networkx
-    (and Python 3.8+ recommended)
+Requirements:
+    - Python 3.8+
+    - anthropic (pip install anthropic)
+    - scikit-learn
+    - networkx
 
-To run:
+Usage:
     1) Set ANTHROPIC_API_KEY in your environment:
-       export ANTHROPIC_API_KEY="your_key"
+       export ANTHROPIC_API_KEY="YOUR_API_KEY_HERE"
     2) python philo_symphony_extended.py
+    3) Observe the printed logs and dialogues for each demonstration block.
+
+Note:
+    This file is intentionally verbose and exceeds 500 lines to illustrate
+    a variety of possible expansions and deep integrations in a single file.
 """
 
 import os
 import re
+import logging
 import xml.etree.ElementTree as ET
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 # External libraries for advanced features
 import networkx as nx
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 
-# Anthropic library for LLM calls
+# Attempt to import anthropic for LLM calls
 try:
     from anthropic import Anthropic
 except ImportError:
     raise ImportError("Please install anthropic with: pip install anthropic")
 
 ###############################################################################
+# GLOBAL CONFIGURATION
+###############################################################################
+
+# Basic config for Python's logging library
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+
+LOGGER = logging.getLogger(__name__)
+
+# We can load Anthropic API key from environment
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+if not ANTHROPIC_API_KEY:
+    LOGGER.warning("No ANTHROPIC_API_KEY found in environment. "
+                   "LLM calls will likely fail if you're making real requests.")
+
+###############################################################################
 # ANTHROPIC CLIENT SETUP
 ###############################################################################
 
-client = Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", "FAKE_KEY_FOR_DEMO"))
+# We'll attempt to instantiate the Anthropic client. If a fake key is used,
+# actual calls will fail or return mock responses, but at least the code won't crash immediately.
+client = Anthropic(api_key=ANTHROPIC_API_KEY)
+
 
 ###############################################################################
-# CORE LLM CALL AND XML UTILITIES
+# HELPER FUNCTIONS: LLM CALLS, XML EXTRACTION, VALIDATION
 ###############################################################################
 
 def llm_call(
@@ -52,19 +86,34 @@ def llm_call(
     system_prompt: str = "",
     model: str = "claude-3-5-sonnet-20241022",
     temperature: float = 0.4,
-    messages: List[Dict[str, str]] = None
+    messages: Optional[List[Dict[str, str]]] = None
 ) -> str:
     """
-    Calls the Anthropic model with the given prompt (and optional system_prompt)
-    to get a response. Optionally appends the prompt to an existing conversation
-    (messages), allowing for multi-turn continuity.
+    Calls the Anthropic model with the given user prompt and (optionally) system prompt.
+    You can optionally append this call to an existing conversation (messages).
+    This function handles:
+        - constructing the 'messages' format for Anthropic
+        - capturing potential exceptions
+        - returning the LLM's text
+
+    Args:
+        prompt (str): The user content for the model.
+        system_prompt (str): The system-level instructions guiding the model's behavior.
+        model (str): The ID or name of the model. Defaults to a hypothetical 'claude-3-5-sonnet-20241022'.
+        temperature (float): Creativity parameter. Higher = more variety, lower = more deterministic.
+        messages (List[Dict[str, str]]): The conversation so far, if doing multi-turn.
+
+    Returns:
+        str: The textual response from the model (or "" if error).
     """
     if messages is None:
         messages = []
 
-    # The user's prompt is appended as the last message in the conversation
+    # Append the user's prompt as the last message
     messages.append({"role": "user", "content": prompt})
 
+    LOGGER.debug("Calling LLM with system prompt: %s", system_prompt)
+    LOGGER.debug("User prompt: %s", prompt)
     try:
         response = client.messages.create(
             model=model,
@@ -73,14 +122,29 @@ def llm_call(
             messages=messages,
             temperature=temperature,
         )
-        return response.content[0].text
+        # We'll assume the first chunk is the main text
+        if response and len(response.content) > 0:
+            ret_text = response.content[0].text
+            LOGGER.debug("LLM response: %s", ret_text)
+            return ret_text
+        else:
+            LOGGER.warning("No content returned from LLM response.")
+            return ""
     except Exception as e:
-        print(f"Error during llm_call: {e}")
+        LOGGER.error("Error during llm_call: %s", e)
         return ""
+
 
 def is_valid_xml(content: str) -> bool:
     """
-    Tries to parse the given content as XML. Returns True if valid, False otherwise.
+    Tries to parse the given content as XML to see if it's well-formed.
+    If parse fails, returns False.
+
+    Args:
+        content (str): The text to check.
+
+    Returns:
+        bool: True if valid XML, False otherwise.
     """
     try:
         ET.fromstring(content)
@@ -88,25 +152,47 @@ def is_valid_xml(content: str) -> bool:
     except ET.ParseError:
         return False
 
+
 def extract_xml(content: str, tag: str) -> str:
     """
-    Extracts the content of the specified XML tag from the given text.
-    Returns an empty string if the tag is not found.
-    Uses a simple pattern-based approach (Regex).
+    Extracts the content of the specified <tag> from the text using a simple Regex approach.
+    If not found or doesn't match, returns "".
+
+    Example:
+        extract_xml("<root>some data</root>", "root") -> "some data"
+
+    Args:
+        content (str): The full text to search in.
+        tag (str): The specific tag name or pattern, e.g., "root" or "Participant name='Plato'".
+
+    Returns:
+        str: The extracted substring, if found, else "".
     """
     pattern = f"<{tag}>(.*?)</{tag}>"
     match = re.search(pattern, content, re.DOTALL)
-    return match.group(1).strip() if match else ""
+    if match:
+        return match.group(1).strip()
+    return ""
+
 
 def extract_xml_tag(content: str, tag: str) -> str:
     """
-    Similar to extract_xml, but provided for naming clarity. Returns the first match only.
+    Convenience alias for extract_xml, clarifies usage in some contexts.
     """
     return extract_xml(content, tag)
 
+
 def extract_nested_tags(text: str, outer_tag: str, inner_tag: str) -> List[str]:
     """
-    Returns a list of all <inner_tag>...</inner_tag> found within the <outer_tag>...</outer_tag> block.
+    Extract all <inner_tag>...</inner_tag> segments from within <outer_tag>...</outer_tag>.
+
+    Args:
+        text (str): The text to parse.
+        outer_tag (str): The parent tag name.
+        inner_tag (str): The child tag name to find.
+
+    Returns:
+        List[str]: A list of all matching child content segments.
     """
     outer_content = extract_xml(text, outer_tag)
     if not outer_content:
@@ -116,73 +202,76 @@ def extract_nested_tags(text: str, outer_tag: str, inner_tag: str) -> List[str]:
 
 
 ###############################################################################
-# SINGLE-SHOT AND MULTI-TURN DIALOGUES
+# BASIC DIALOGUE FUNCTIONS (SINGLE-SHOT, MULTI-TURN)
 ###############################################################################
 
 def generate_philosophers_dialogue(philosopher1: str, philosopher2: str, topic: str) -> None:
     """
-    Implements a single-shot 'Philosopher's Stone' scenario:
-    a dialogue between philosopher1 and philosopher2 about the given topic,
-    with each philosopher's statement wrapped in XML tags for easy parsing.
+    Single-shot 'Philosopher's Stone' scenario: prompts the LLM for a single dialogue
+    with each philosopher labeled in XML. Then prints the results.
+
+    Args:
+        philosopher1 (str): Name of the first philosopher.
+        philosopher2 (str): Name of the second philosopher.
+        topic (str): The main topic of the conversation.
     """
     system_prompt = (
         f"You are the moderator of a conversation between {philosopher1} and {philosopher2}. "
-        f"Each speaks in their own style, referencing their distinct philosophies or ideas. "
+        "Each speaks in their own style, referencing their distinct philosophies or ideas. "
         "Format the final answer using the following tags exactly:\n"
         f"<{philosopher1.lower()}> ... </{philosopher1.lower()}>\n"
         f"<{philosopher2.lower()}> ... </{philosopher2.lower()}>\n"
         "Do not provide any content outside these two tags."
     )
-    user_prompt = (
-        f"The conversation topic is: {topic}. Engage in a robust exchange of ideas, each philosopher responding in turn."
-    )
+    user_prompt = f"The conversation topic is: {topic}. Engage in a robust exchange of ideas."
+
     raw_output = llm_call(user_prompt, system_prompt=system_prompt, temperature=0.5)
 
-    # Attempt minimal validation, and if invalid, ask to regenerate once
+    # Minimal validation
     if not is_valid_xml(raw_output):
+        LOGGER.warning("Response does not appear to be valid XML. Attempting single re-prompt.")
         regen_prompt = (
-            "Your previous response was not valid XML or did not match the structure. "
-            "Please regenerate with the exact tag structure requested."
+            "Your previous response was invalid XML. Please regenerate with the requested structure."
         )
         raw_output = llm_call(regen_prompt, system_prompt=system_prompt, temperature=0.5)
 
-    # Extract each philosopher's speech
-    philosopher1_text = extract_xml_tag(raw_output, philosopher1.lower())
-    philosopher2_text = extract_xml_tag(raw_output, philosopher2.lower())
+    speaker1_text = extract_xml_tag(raw_output, philosopher1.lower())
+    speaker2_text = extract_xml_tag(raw_output, philosopher2.lower())
 
-    print(f"=== Dialogue on {topic} ===\n")
-    print(f"{philosopher1.upper()}:\n{philosopher1_text}\n")
-    print(f"{philosopher2.upper()}:\n{philosopher2_text}\n")
+    print(f"=== Dialogue on '{topic}' ===\n")
+    print(f"{philosopher1.upper()}:\n{speaker1_text}\n")
+    print(f"{philosopher2.upper()}:\n{speaker2_text}\n")
 
 
 def multi_turn_philosophers(philosopher1: str, philosopher2: str, topic: str, rounds: int = 3):
     """
-    Demonstrates a multi-turn dialogue between two philosophers about a specified topic.
-    Each round is an iterative call. We try to ensure well-formed XML each time.
-    We'll store the conversation so far in 'conversation' to preserve context.
-    """
-    system_prompt = f"""You are orchestrating a multi-round debate between {philosopher1} and {philosopher2} on the topic "{topic}".
-The format of each round must be:
-<round>
-  <{philosopher1.lower()}>
-    Their statement goes here
-  </{philosopher1.lower()}>
-  <{philosopher2.lower()}>
-    Their statement goes here
-  </{philosopher2.lower()}>
-</round>
-Do not include anything outside these XML tags. Make sure it's valid XML. 
-Keep the style distinct for each philosopher."""
+    Multi-turn dialogue: each round extends the conversation with references to the prior text.
+    The LLM is instructed to produce well-formed XML: <round> <philosopher1> ... </philosopher1> ...
 
-    conversation = [
-        {"role": "system", "content": system_prompt}
-    ]
+    Args:
+        philosopher1 (str): Name of the first philosopher.
+        philosopher2 (str): Name of the second philosopher.
+        topic (str): Topic to discuss.
+        rounds (int): Number of iterative rounds.
+
+    Returns:
+        List[Dict[str, str]]: The conversation record (system + user + assistant messages).
+    """
+    system_prompt = (
+        f"You are orchestrating a multi-round debate between {philosopher1} and {philosopher2} "
+        f"on the topic '{topic}'. The format of each round must be:\n"
+        f"<round>\n  <{philosopher1.lower()}>\n    ...\n  </{philosopher1.lower()}>\n"
+        f"  <{philosopher2.lower()}>\n    ...\n  </{philosopher2.lower()}>\n</round>\n"
+        "No text should appear outside these tags. Make sure it's valid XML. "
+        "Keep each philosopher's style distinct."
+    )
+
+    conversation = [{"role": "system", "content": system_prompt}]
 
     for current_round in range(1, rounds + 1):
         user_prompt = (
             f"This is round {current_round}. Each philosopher should respond in turn, "
-            "building on what was said previously. "
-            f"The topic is still: {topic}."
+            f"building on prior statements about '{topic}'."
         )
         raw_output = llm_call(
             prompt=user_prompt,
@@ -191,12 +280,12 @@ Keep the style distinct for each philosopher."""
             temperature=0.7
         )
 
-        # Validate
         if not is_valid_xml(raw_output):
+            LOGGER.warning("Round %d: invalid XML. Attempting re-prompt.", current_round)
             regen_prompt = (
-                "Your previous response was not valid XML or incorrect. "
-                f"Please regenerate with the exact tag structure: "
-                f"<round><{philosopher1.lower()}>...</{philosopher1.lower()}><{philosopher2.lower()}>...</{philosopher2.lower()}></round>."
+                "Your previous response was invalid. Please follow the exact structure:\n"
+                f"<round><{philosopher1.lower()}>...</{philosopher1.lower()}><{philosopher2.lower()}>"
+                f"...</{philosopher2.lower()}></round>"
             )
             raw_output = llm_call(
                 prompt=regen_prompt,
@@ -213,13 +302,17 @@ Keep the style distinct for each philosopher."""
 
 
 ###############################################################################
-# "SYMPHONY OF SYNTHESIS" - INTERDISCIPLINARY EXPERTS
+# SYMPHONY OF SYNTHESIS (MULTIPLE EXPERTS)
 ###############################################################################
 
 def symphony_of_synthesis(fields: List[str], topic: str) -> None:
     """
-    Implements the 'Symphony of Synthesis' by asking multiple domain experts
-    to discuss how their domains intersect around a given topic, each labeled with XML.
+    Asks multiple domain experts to comment on a shared topic. 
+    Each domain is labeled in XML with <expert domain='...'> tags.
+
+    Args:
+        fields (List[str]): e.g. ["Baroque Music", "Software Architecture", "Mycology"]
+        topic (str): The topic they should unify around.
     """
     domain_tags = []
     for field in fields:
@@ -229,31 +322,32 @@ def symphony_of_synthesis(fields: List[str], topic: str) -> None:
     system_prompt = (
         "You are orchestrating a roundtable among diverse domain experts. "
         "They must respond in distinct voices, focusing on potential overlaps and synergies. "
-        "Format your final answer using the following tags exactly, and do not provide text outside them:\n\n"
+        "Format the final answer using the following tags exactly:\n"
         + "\n".join(domain_tags)
-        + "\n"
+        + "\nNo extra text outside these tags."
     )
-    user_prompt = f"Each expert should explore how {topic} relates to their domain, then highlight surprising connections."
+    user_prompt = (
+        f"Each expert should explore how '{topic}' relates to their domain, then highlight surprising connections."
+    )
 
     raw_output = llm_call(user_prompt, system_prompt=system_prompt, temperature=0.6)
 
-    # Attempt minimal validation
     if not is_valid_xml(raw_output):
+        LOGGER.warning("Symphony initial response invalid. Attempting re-prompt.")
         regen_prompt = (
-            "Your previous response was not valid XML or did not match the structure. "
-            "Regenerate using the exact tag structure requested."
+            "Your previous response was invalid XML. Please follow the structure exactly."
         )
         raw_output = llm_call(regen_prompt, system_prompt=system_prompt, temperature=0.6)
 
     print(f"=== SYMPHONY OF SYNTHESIS ON: {topic} ===\n")
     for field in fields:
         safe_field = field.lower().replace(" ", "_")
-        content = extract_xml_tag(raw_output, f"expert domain='{safe_field}'")
-        print(f"--- Insights from {field} ---\n{content}\n")
+        block = extract_xml_tag(raw_output, f"expert domain='{safe_field}'")
+        print(f"--- Insights from {field} ---\n{block}\n")
 
 
 ###############################################################################
-# ADVANCED CONCEPT TRACKING (TF-IDF) & EMERGENT PATTERN DETECTION
+# ADVANCED CONCEPT TRACKING (TF-IDF)
 ###############################################################################
 
 def advanced_track_concepts(
@@ -261,68 +355,78 @@ def advanced_track_concepts(
     concept_dictionary: Dict[str, List[str]]
 ) -> Dict[str, float]:
     """
-    Tracks concept relevance using TF-IDF across the entire conversation.
-    conversation_history: a list of strings (text output from each round).
-    concept_dictionary: a dict mapping concept labels to sets/lists of keywords.
+    Tracks concept relevance using TF-IDF across the entire conversation history.
 
-    Returns a dict: {concept: cumulative_weight}
+    Steps:
+        1) Convert each round or segment in conversation_history into a doc in a corpus.
+        2) Fit a TfidfVectorizer, ignoring English stopwords.
+        3) For each concept in concept_dictionary, accumulate the TF-IDF for any keywords that appear.
+        4) Return a dict mapping each concept to a cumulative weight.
+
+    Args:
+        conversation_history (List[str]): List of textual segments from the conversation.
+        concept_dictionary (Dict[str, List[str]]): Mapping from concept labels to keywords.
+
+    Returns:
+        Dict[str, float]: Concept weights, e.g., {"Recursion": 2.0, "Allegory of the Cave": 1.3, ...}
     """
-    from sklearn.feature_extraction.text import TfidfVectorizer
-
-    # Each round is one doc
-    corpus = conversation_history
-    if not corpus:
+    if not conversation_history:
         return {}
 
     vectorizer = TfidfVectorizer(stop_words='english')
-    X = vectorizer.fit_transform(corpus)  # shape: [num_rounds, num_features]
+    X = vectorizer.fit_transform(conversation_history)
     feature_names = vectorizer.get_feature_names_out()
 
     concept_weights = {concept: 0.0 for concept in concept_dictionary}
 
-    # For each round, identify top terms and see if they map to known concepts
     for row_idx in range(X.shape[0]):
-        round_vec = X.getrow(row_idx).toarray().flatten()
-        # For speed, gather an index for all features with nonzero tf-idf
-        nonzero_indices = round_vec.nonzero()[0]
-
-        # Check each concept's keywords
+        row_vec = X.getrow(row_idx).toarray().flatten()
         for concept, keywords in concept_dictionary.items():
             for kw in keywords:
-                # If the keyword is actually in the vocabulary
-                if kw.lower() in feature_names:
-                    kw_idx = np.where(feature_names == kw.lower())[0]
-                    if kw_idx.size > 0 and kw_idx[0] in nonzero_indices:
-                        concept_weights[concept] += round_vec[kw_idx[0]]
+                kw_lower = kw.lower()
+                if kw_lower in feature_names:
+                    kw_idx = np.where(feature_names == kw_lower)[0]
+                    if kw_idx.size > 0:
+                        # Accumulate TF-IDF
+                        concept_weights[concept] += row_vec[kw_idx[0]]
 
     return concept_weights
+
+
+###############################################################################
+# BUILDING A CONCEPT GRAPH & DETECTING EMERGENT PATTERNS
+###############################################################################
 
 def build_concept_graph(
     conversation_history: List[str],
     concept_dictionary: Dict[str, List[str]]
 ) -> nx.Graph:
     """
-    Creates a graph where nodes are concepts, edges occur when two or more concepts
-    appear in the same sentence or round.
+    Creates a NetworkX graph where each node is a concept. We add or strengthen edges
+    if multiple concepts appear in the same sentence. Edge weights represent the
+    co-occurrence frequency.
+
+    Args:
+        conversation_history (List[str]): List of textual segments (e.g., each round).
+        concept_dictionary (Dict[str, List[str]]): {concept_label: [keywords]}
+
+    Returns:
+        nx.Graph: A graph with nodes = concepts, edges = synergy. Edge attribute "weight" is co-occurrence count.
     """
     G = nx.Graph()
-    # Initialize nodes
     for c in concept_dictionary.keys():
         G.add_node(c)
 
-    # For each chunk of text, we do naive sentence splits
-    for round_text in conversation_history:
-        sentences = re.split(r'[.!?]', round_text)
+    for segment in conversation_history:
+        sentences = re.split(r'[.!?]', segment)
         for sentence in sentences:
             present_concepts = []
             for concept, keywords in concept_dictionary.items():
-                # If any keyword is in that sentence
                 if any(kw.lower() in sentence.lower() for kw in keywords):
                     present_concepts.append(concept)
-
-            # Form edges among present_concepts
+            # Form edges among the concepts that appear together
             for i in range(len(present_concepts)):
-                for j in range(i+1, len(present_concepts)):
+                for j in range(i + 1, len(present_concepts)):
                     c1, c2 = present_concepts[i], present_concepts[j]
                     if G.has_edge(c1, c2):
                         G[c1][c2]['weight'] += 1
@@ -330,98 +434,133 @@ def build_concept_graph(
                         G.add_edge(c1, c2, weight=1)
     return G
 
+
 def detect_emergent_patterns(concept_graph: nx.Graph) -> List[str]:
     """
-    Naively checks for edges of higher weight or newly formed cliques 
-    that might indicate emergent synergy. Returns a list of textual insights.
+    A naive approach to detecting "emergent" patterns: we look for edges with weight >=2
+    or connected components of size >2.
+
+    Args:
+        concept_graph (nx.Graph): A graph built by build_concept_graph.
+
+    Returns:
+        List[str]: A list of textual descriptions of potential emergent synergies.
     """
-    emergent_insights = []
+    insights = []
 
-    # Example: look for edges above a certain threshold
-    for (u, v, w) in concept_graph.edges(data=True):
-        if w.get('weight', 0) >= 2:
-            # We consider this a synergy
-            msg = f"Emergent synergy detected between '{u}' and '{v}' (weight={w['weight']})."
-            emergent_insights.append(msg)
+    # Edge-based synergy
+    for (u, v, data) in concept_graph.edges(data=True):
+        weight = data.get('weight', 0)
+        if weight >= 2:
+            synergy_msg = f"Synergy: '{u}' and '{v}' co-occurred with weight={weight}."
+            insights.append(synergy_msg)
 
-    # Optional: find cliques or connected components with > 2 concepts
+    # Connected components
     for component in nx.connected_components(concept_graph):
         if len(component) > 2:
-            emergent_insights.append(
-                f"Multi-concept synergy among: {', '.join(component)}"
-            )
+            c_list = sorted(list(component))
+            msg = f"Multi-concept synergy among: {', '.join(c_list)}"
+            insights.append(msg)
 
-    return emergent_insights
+    return insights
+
 
 ###############################################################################
-# MULTIPLE DIALECTICAL STRUCTURES (HEGELIAN, SOCRATIC)
+# MULTIPLE DIALECTICAL STRUCTURES (HEGELIAN & SOCRATIC)
 ###############################################################################
 
 def build_system_prompt_for_hegelian(participants: List[str], round_num: int, history: List[str]) -> str:
     """
-    Instructs each participant to produce <Thesis>, <Antithesis>, <Synthesis> tags.
+    Constructs a system prompt to produce <Thesis>, <Antithesis>, <Synthesis> for each participant.
+
+    Args:
+        participants (List[str]): The thinkers or participants in the debate.
+        round_num (int): The current round index, for reference in the prompt.
+        history (List[str]): List of prior LLM outputs or partial conversation.
+
+    Returns:
+        str: A system-level instruction string for the LLM.
     """
-    participant_tags = []
+    participant_blocks = []
     for p in participants:
         safe_p = p.replace(" ", "_").lower()
-        participant_tags.append(
-f"""<Participant name='{safe_p}'>
-    <Thesis>...</Thesis>
-    <Antithesis>...</Antithesis>
-    <Synthesis>...</Synthesis>
-</Participant>"""
+        block = (
+f"<Participant name='{safe_p}'>\n"
+"    <Thesis>...</Thesis>\n"
+"    <Antithesis>...</Antithesis>\n"
+"    <Synthesis>...</Synthesis>\n"
+"</Participant>"
         )
+        participant_blocks.append(block)
 
     prompt = (
         f"You are orchestrating round {round_num+1} in a Hegelian dialectic among: "
         + ", ".join(participants)
         + ". Use the following structure for each participant:\n\n"
-        + "\n".join(participant_tags)
-        + "\n\nPrior conversation:\n"
+        + "\n".join(participant_blocks)
+        + "\n\nPrior discussion:\n"
         + "\n".join(history)
-        + "\nNo extra text outside these XML tags."
+        + "\nDo not include content outside these tags."
     )
     return prompt
 
+
 def build_system_prompt_for_socratic(participants: List[str], round_num: int, history: List[str]) -> str:
     """
-    Instructs each participant to produce <Question>, <AttemptedDefinition>, <CounterExample>, <Refinement>.
+    Constructs a system prompt to produce <Question>, <AttemptedDefinition>, <CounterExample>, <Refinement>.
+
+    Args:
+        participants (List[str]): The thinkers or participants in the debate.
+        round_num (int): Current round index.
+        history (List[str]): Past conversation or outputs.
+
+    Returns:
+        str: A system-level instruction for Socratic structure.
     """
-    participant_tags = []
+    participant_blocks = []
     for p in participants:
         safe_p = p.replace(" ", "_").lower()
-        participant_tags.append(
-f"""<Participant name='{safe_p}'>
-    <Question>...</Question>
-    <AttemptedDefinition>...</AttemptedDefinition>
-    <CounterExample>...</CounterExample>
-    <Refinement>...</Refinement>
-</Participant>"""
+        block = (
+f"<Participant name='{safe_p}'>\n"
+"    <Question>...</Question>\n"
+"    <AttemptedDefinition>...</AttemptedDefinition>\n"
+"    <CounterExample>...</CounterExample>\n"
+"    <Refinement>...</Refinement>\n"
+"</Participant>"
         )
+        participant_blocks.append(block)
 
     prompt = (
         f"You are orchestrating round {round_num+1} in a Socratic dialogue among: "
         + ", ".join(participants)
         + ". Use the following structure for each participant:\n\n"
-        + "\n".join(participant_tags)
+        + "\n".join(participant_blocks)
         + "\n\nPrior conversation:\n"
         + "\n".join(history)
-        + "\nNo extra text outside these XML tags."
+        + "\nNo extra text outside these tags."
     )
     return prompt
 
+
 def parse_hegelian_round(response: str, participants: List[str]) -> Dict[str, Dict[str, str]]:
     """
-    Extracts <Thesis>, <Antithesis>, <Synthesis> from each participant.
+    Extracts <Thesis>, <Antithesis>, <Synthesis> from each participant's block.
+
+    Args:
+        response (str): The raw text produced by the LLM for a given round.
+        participants (List[str]): The participants to look for.
+
+    Returns:
+        Dict[str, Dict[str, str]]: For each participant, a dict of {"Thesis": "...", "Antithesis": "...", "Synthesis": "..."}.
     """
     results = {}
     for p in participants:
         safe_p = p.replace(" ", "_").lower()
-        block = extract_xml(response, f"Participant name='{safe_p}'")
-        if block:
-            thesis = extract_xml(block, "Thesis")
-            antithesis = extract_xml(block, "Antithesis")
-            synthesis = extract_xml(block, "Synthesis")
+        p_block = extract_xml(response, f"Participant name='{safe_p}'")
+        if p_block:
+            thesis = extract_xml(p_block, "Thesis")
+            antithesis = extract_xml(p_block, "Antithesis")
+            synthesis = extract_xml(p_block, "Synthesis")
             results[p] = {
                 "Thesis": thesis,
                 "Antithesis": antithesis,
@@ -429,87 +568,150 @@ def parse_hegelian_round(response: str, participants: List[str]) -> Dict[str, Di
             }
     return results
 
+
 def parse_socratic_round(response: str, participants: List[str]) -> Dict[str, Dict[str, str]]:
     """
     Extracts <Question>, <AttemptedDefinition>, <CounterExample>, <Refinement> from each participant.
+
+    Args:
+        response (str): The LLM's output for the round.
+        participants (List[str]): Names of participants.
+
+    Returns:
+        Dict[str, Dict[str, str]]: For each participant, a dict of the Socratic steps.
     """
     results = {}
     for p in participants:
         safe_p = p.replace(" ", "_").lower()
-        block = extract_xml(response, f"Participant name='{safe_p}'")
-        if block:
-            question = extract_xml(block, "Question")
-            definition = extract_xml(block, "AttemptedDefinition")
-            counter_example = extract_xml(block, "CounterExample")
-            refinement = extract_xml(block, "Refinement")
+        p_block = extract_xml(response, f"Participant name='{safe_p}'")
+        if p_block:
+            question = extract_xml(p_block, "Question")
+            definition = extract_xml(p_block, "AttemptedDefinition")
+            counterex = extract_xml(p_block, "CounterExample")
+            refinement = extract_xml(p_block, "Refinement")
             results[p] = {
                 "Question": question,
                 "AttemptedDefinition": definition,
-                "CounterExample": counter_example,
+                "CounterExample": counterex,
                 "Refinement": refinement
             }
     return results
 
 
-###############################################################################
-# A GENERAL "DIALECTICAL ENGINE" SHOWING Hegelian OR Socratic ROUNDS
-###############################################################################
-
 def run_dialectical_debate(
     participants: List[str],
     topic: str,
     rounds: int = 2,
-    style: str = "hegelian"
+    style: str = "hegelian",
+    temperature: float = 0.7
 ) -> List[str]:
     """
-    style can be "hegelian" or "socratic".
-    Each round constructs a different system prompt based on style.
+    Orchestrates a multi-round dialectical debate. style can be "hegelian" or "socratic".
+
+    For each round:
+        1) Build a system prompt based on style.
+        2) Attempt to parse the result, printing out each participant's phases.
+
+    Args:
+        participants (List[str]): The participants in the debate.
+        topic (str): The topic of discussion.
+        rounds (int): Number of iterative rounds.
+        style (str): "hegelian" or "socratic".
+        temperature (float): Creativity setting for LLM.
+
+    Returns:
+        List[str]: The raw LLM outputs for each round.
     """
-    conversation_history = []
+    conversation_history: List[str] = []
     for r in range(rounds):
         if style.lower() == "hegelian":
             system_prompt = build_system_prompt_for_hegelian(participants, r, conversation_history)
         else:
             system_prompt = build_system_prompt_for_socratic(participants, r, conversation_history)
 
-        user_prompt = f"Round {r+1} on '{topic}' in {style} style. Continue the dialogue."
+        user_prompt = f"Round {r+1} about '{topic}' in {style} style."
+        response = llm_call(prompt=user_prompt, system_prompt=system_prompt, temperature=temperature)
 
-        response = llm_call(prompt=user_prompt, system_prompt=system_prompt, temperature=0.7)
         if not is_valid_xml(response):
-            # Attempt one re-gen
+            LOGGER.warning("Response invalid for round %d. Attempting re-prompt.", r+1)
             regen_prompt = (
-                f"Your previous response was invalid or didn't match the {style} structure. "
-                "Regenerate with the correct tags."
+                f"Your previous response was invalid for a {style} dialogue. Please regenerate with correct structure."
             )
-            response = llm_call(prompt=regen_prompt, system_prompt=system_prompt, temperature=0.7)
+            response = llm_call(prompt=regen_prompt, system_prompt=system_prompt, temperature=temperature)
 
         conversation_history.append(response)
 
-        # For demonstration, parse each round for insights
+        # Parse & display
         if style.lower() == "hegelian":
             round_data = parse_hegelian_round(response, participants)
-            print(f"\n=== Hegelian Round {r+1} ===")
+            print(f"\n=== Hegelian Round {r+1} ===\n")
             for p, phases in round_data.items():
-                print(f"{p} -> Thesis: {phases['Thesis']}\n"
-                      f"         Antithesis: {phases['Antithesis']}\n"
-                      f"         Synthesis: {phases['Synthesis']}\n")
+                print(
+                    f"{p}:\n  Thesis: {phases['Thesis']}\n"
+                    f"         Antithesis: {phases['Antithesis']}\n"
+                    f"         Synthesis: {phases['Synthesis']}\n"
+                )
         else:
             round_data = parse_socratic_round(response, participants)
-            print(f"\n=== Socratic Round {r+1} ===")
+            print(f"\n=== Socratic Round {r+1} ===\n")
             for p, phases in round_data.items():
-                print(f"{p} -> Question: {phases['Question']}\n"
-                      f"      AttemptedDefinition: {phases['AttemptedDefinition']}\n"
-                      f"      CounterExample: {phases['CounterExample']}\n"
-                      f"      Refinement: {phases['Refinement']}\n")
+                print(
+                    f"{p}:\n  Question: {phases['Question']}\n"
+                    f"  AttemptedDefinition: {phases['AttemptedDefinition']}\n"
+                    f"  CounterExample: {phases['CounterExample']}\n"
+                    f"  Refinement: {phases['Refinement']}\n"
+                )
 
     return conversation_history
 
 
 ###############################################################################
-# MAIN DEMO
+# DEMO / MAIN
 ###############################################################################
 
-if __name__ == "__main__":
+def interactive_loop():
+    """
+    An optional interactive loop that asks users to input a style, participants, etc.,
+    then runs a short dialogue. This is purely illustrative, showing how one might
+    incorporate user-driven flows in a console environment.
+    """
+    print("Welcome to the Philosophical Engine Interactive Loop!")
+    print("You can type 'exit' at any prompt to quit.\n")
+
+    while True:
+        style = input("Choose a dialogue style (hegelian / socratic / exit): ").strip().lower()
+        if style == "exit":
+            break
+        if style not in ["hegelian", "socratic"]:
+            print("Unknown style. Try again or type 'exit' to quit.")
+            continue
+
+        participants_input = input("Enter participants (comma-separated), e.g. 'Plato, Nietzsche': ")
+        if participants_input.strip().lower() == "exit":
+            break
+        participants = [p.strip() for p in participants_input.split(",") if p.strip()]
+
+        topic_input = input("Enter a topic to discuss (or 'exit'): ")
+        if topic_input.strip().lower() == "exit":
+            break
+
+        rounds_input = input("How many rounds? (default 2): ")
+        if rounds_input.strip().lower() == "exit":
+            break
+        try:
+            rounds_val = int(rounds_input.strip()) if rounds_input.strip() else 2
+        except ValueError:
+            rounds_val = 2
+
+        print(f"\nInitiating a {style} dialogue among {participants} about '{topic_input}'.\n")
+        run_dialectical_debate(participants, topic_input, rounds=rounds_val, style=style)
+
+
+def main_demo():
+    """
+    This function runs a series of demonstration calls for the various features.
+    The final code block in __main__ calls this function.
+    """
     # 1) Single-Shot Philosophers
     print("=== SINGLE-SHOT PHILOSOPHERS DEMO ===")
     generate_philosophers_dialogue("Plato", "Douglas_Hofstadter", "the nature of consciousness")
@@ -524,31 +726,44 @@ if __name__ == "__main__":
 
     # 4) Advanced Concept Tracking + Emergent Pattern Detection
     print("\n=== ADVANCED CONCEPT TRACKING & EMERGENT PATTERN DETECTION DEMO ===")
+
     concept_dict = {
         "Forms": ["forms", "platonic", "ideal"],
         "Recursion": ["recursion", "self-reference", "loop"],
         "Allegory of the Cave": ["cave", "shadows", "prisoners"],
         "Emergent Complexity": ["emergent", "complexity", "emergence"]
     }
-    # Suppose we have conversation_history from multiple calls or manual text
+
+    # Some mock text for demonstration
     conversation_history_mock = [
-        "Plato introduced the idea of forms in the first round. He also mentioned the cave allegory.",
-        "Nietzsche responded by challenging ideal forms, but recursion and self-reference also came up in the discussion about consciousness.",
-        "They both noted emergent complexity in the interplay of philosophical concepts, referencing shadows in the cave example."
+        "Plato introduced the concept of forms and also the famous cave allegory about shadows.",
+        "Nietzsche responded with a challenge to ideal forms, but recursion was also discussed in terms of self-reference.",
+        "They ended up referencing emergent complexity in the interplay of ideas regarding illusions and loops."
     ]
 
     concept_weights = advanced_track_concepts(conversation_history_mock, concept_dict)
-    print("Concept Weights:", concept_weights)
+    print("Concept Weights (TF-IDF Approximation):")
+    for c, w in concept_weights.items():
+        print(f"  {c}: {w:.3f}")
 
-    # Build a concept graph
     G = build_concept_graph(conversation_history_mock, concept_dict)
     emergent = detect_emergent_patterns(G)
-    print("Emergent Patterns:", emergent)
+    print("\nEmergent Patterns or Synergies:")
+    for synergy in emergent:
+        print(f"  {synergy}")
 
-    # 5) Dialectical Debate with Hegelian Structure
+    # 5) Dialectical Debate: Hegelian
     print("\n=== HEGELIAN DIALECTICAL DEBATE DEMO ===")
-    hegelian_history = run_dialectical_debate(["Aristotle", "Kant"], "metaphysics of ethics", rounds=2, style="hegelian")
+    run_dialectical_debate(["Aristotle", "Kant"], "metaphysics of ethics", rounds=2, style="hegelian")
 
-    # 6) Dialectical Debate with Socratic Structure
+    # 6) Dialectical Debate: Socratic
     print("\n=== SOCRATIC DIALOGUE DEMO ===")
-    socratic_history = run_dialectical_debate(["Socrates", "Descartes"], "the nature of knowledge", rounds=2, style="socratic")
+    run_dialectical_debate(["Socrates", "Descartes"], "the nature of knowledge", rounds=2, style="socratic")
+
+
+if __name__ == "__main__":
+    # We’ll do a standard set of demos. If you want an interactive console approach,
+    # uncomment the interactive_loop() line below.
+    # interactive_loop()
+
+    main_demo()
